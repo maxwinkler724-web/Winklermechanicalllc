@@ -2,8 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const root = (process.env.WM_SITE_URL || 'https://winkler-stripe-checkout-review.vercel.app').replace(/\/$/, '');
-const req = (p, options = {}) =>
-  fetch(root + p, { signal: AbortSignal.timeout(18000), redirect: 'manual', ...options });
+const req = async (p, options = {}) => {
+  const headers = new Headers(options.headers || {});
+  const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (bypass) headers.set('x-vercel-protection-bypass', bypass);
+  const response = await fetch(root + p, { signal: AbortSignal.timeout(18000), redirect: 'manual', ...options, headers });
+  if (response.status === 403 && response.headers.get('x-vercel-mitigated') === 'challenge') {
+    throw new Error('Vercel WAF challenged this automated runner. Do not disable security: use an authorized automation bypass secret for CI, or test through a real browser.');
+  }
+  return response;
+};
 
 test('Critical marketing and legal routes load', async () => {
   for (const p of ['/', '/residential', '/commercial', '/gallery', '/garfield', '/bergen-county', '/privacy', '/terms', '/privacy-choices', '/sitemap.xml', '/robots.txt', '/favicon.svg']) {
