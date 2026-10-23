@@ -1,0 +1,35 @@
+name: Winkler launch audit (read-only)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'qa/**'
+      - '.github/workflows/launch-audit.yml'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WM_SITE_URL: https://winkler-stripe-checkout-review.vercel.app
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Existing read-only suites
+        continue-on-error: true
+        run: node --test qa/live-prelaunch.test.mjs qa/php-exposure.test.mjs
+      - name: Crawl and report every page
+        run: node qa/launch-audit.mjs > audit.json && cat audit.json
+      - name: Lighthouse (mobile) on key pages
+        continue-on-error: true
+        run: |
+          for p in / /residential /commercial /gallery /privacy; do
+            npx --yes lighthouse@12.6.1 "$WM_SITE_URL$p" --quiet --chrome-flags="--headless=new --no-sandbox" \
+              --only-categories=performance,accessibility,best-practices,seo --output=json --output-path=lh.json || continue
+            node -e 'const r=require("./lh.json");const s=Object.fromEntries(Object.entries(r.categories).map(([k,v])=>[k,Math.round(v.score*100)]));const fails=Object.values(r.audits).filter(a=>a.score!==null&&a.score<0.9&&a.scoreDisplayMode!=="informative"&&a.scoreDisplayMode!=="manual").map(a=>a.id+": "+a.title+(a.displayValue?" ("+a.displayValue+")":""));console.log(JSON.stringify({page:process.argv[1],scores:s,lcp:r.audits["largest-contentful-paint"].displayValue,cls:r.audits["cumulative-layout-shift"].displayValue,fails},null,1))' "$p"
+          done
